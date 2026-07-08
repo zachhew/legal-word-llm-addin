@@ -56,11 +56,47 @@ class OpenAICompatibleProvider:
 
         return ""
 
-    def _parse_content(self, content: object) -> dict:
-        if not isinstance(content, str):
-            raise InvalidLLMResponseError("LLM provider content is not a JSON string.")
+    def _content_to_text(self, content: object) -> str | None:
+        if isinstance(content, str):
+            return content
 
-        cleaned_content = content.strip()
+        if isinstance(content, list):
+            parts: list[str] = []
+            for item in content:
+                if isinstance(item, str):
+                    parts.append(item)
+                    continue
+
+                if not isinstance(item, dict):
+                    continue
+
+                for key in ("text", "content"):
+                    value = item.get(key)
+                    if isinstance(value, str):
+                        parts.append(value)
+                        break
+
+            return "\n".join(parts) if parts else None
+
+        if isinstance(content, dict):
+            for key in ("text", "content"):
+                value = content.get(key)
+                if isinstance(value, str):
+                    return value
+
+        return None
+
+    def _parse_content(self, content: object) -> dict:
+        if isinstance(content, dict):
+            return content
+
+        cleaned_content = self._content_to_text(content)
+        if cleaned_content is None:
+            raise InvalidLLMResponseError(
+                "LLM provider content could not be converted to JSON text."
+            )
+
+        cleaned_content = cleaned_content.strip()
         cleaned_content = re.sub(r"^```(?:json)?\s*", "", cleaned_content, flags=re.IGNORECASE)
         cleaned_content = re.sub(r"\s*```$", "", cleaned_content).strip()
 
@@ -82,6 +118,29 @@ class OpenAICompatibleProvider:
             raise InvalidLLMResponseError("LLM provider JSON response must be an object.")
 
         return parsed
+
+    def _build_json_repair_messages(self, content: object) -> list[dict[str, str]]:
+        content_text = self._content_to_text(content)
+        if content_text is None:
+            content_text = json.dumps(content, ensure_ascii=False)
+
+        return [
+            {
+                "role": "system",
+                "content": (
+                    "You repair malformed LLM JSON responses. Return one valid JSON "
+                    "object only. Do not add markdown, comments, explanations, or new "
+                    "facts. Preserve the original keys and values whenever possible."
+                ),
+            },
+            {
+                "role": "user",
+                "content": (
+                    "Repair this content into a valid JSON object:\n\n"
+                    f"{content_text}"
+                ),
+            },
+        ]
 
     def _should_retry_without_response_format(
         self, status_code: int, provider_message: str
@@ -136,6 +195,37 @@ class OpenAICompatibleProvider:
         except httpx.HTTPError as error:
             raise LLMProviderError("LLM provider request failed.") from error
 
+    async def _request_json_repair(
+        self,
+        *,
+        url: str,
+        headers: dict[str, str],
+        model: str,
+        content: object,
+        temperature: float,
+    ) -> dict:
+        payload: dict[str, Any] = {
+            "model": model,
+            "messages": self._build_json_repair_messages(content),
+            "temperature": temperature,
+            "response_format": {"type": "json_object"},
+        }
+        response = await self._post_chat_completions(
+            url=url,
+            headers=headers,
+            payload=payload,
+        )
+
+        try:
+            response_payload = response.json()
+            repaired_content = response_payload["choices"][0]["message"]["content"]
+        except (KeyError, IndexError, TypeError, json.JSONDecodeError) as error:
+            raise InvalidLLMResponseError(
+                "LLM JSON repair response does not match chat completions format."
+            ) from error
+
+        return self._parse_content(repaired_content)
+
     async def generate_json(
         self,
         messages: list[dict[str, str]],
@@ -173,4 +263,22 @@ class OpenAICompatibleProvider:
                 "LLM provider response does not match chat completions format."
             ) from error
 
-        return self._parse_content(content)
+        try:
+            return self._parse_content(content)
+        except InvalidLLMResponseError as parse_error:
+            settings = get_settings()
+            if settings.llm_json_repair_attempts <= 0:
+                raise parse_error
+
+            try:
+                return await self._request_json_repair(
+                    url=url,
+                    headers=headers,
+                    model=model,
+                    content=content,
+                    temperature=0.0,
+                )
+            except LLMProviderError as repair_error:
+                raise InvalidLLMResponseError(
+                    "LLM provider content could not be repaired into valid JSON."
+                ) from repair_error

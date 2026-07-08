@@ -32,22 +32,43 @@ python3 -m venv --prompt backend .venv
 
 ## Frontend
 
+Install trusted Office localhost certificates once if they are not installed yet:
+
 ```bash
 cd frontend
-npm start
+npx office-addin-dev-certs install
 ```
 
-The task pane runs at `https://localhost:3000`. During local development it calls the
-backend through the webpack proxy path `/backend`, which is forwarded to
+```bash
+cd frontend
+npm run dev
+```
+
+The task pane frontend uses Vite + React + TypeScript and runs at
+`https://localhost:3000/taskpane.html`. Office.js is loaded from the official Microsoft CDN.
+During local development it calls the backend through the Vite proxy path `/backend`, forwarded to
 `http://127.0.0.1:8000`.
 
-If backend calls fail after config changes, restart `npm start` so the dev server reloads
-`webpack.config.js`.
+Sideload the Word add-in from a second terminal:
+
+```bash
+cd frontend
+npm run sideload
+```
+
+Stop the sideloaded add-in/debugging session:
+
+```bash
+cd frontend
+npm run stop
+```
+
+If backend calls fail after config changes, restart `npm run dev` so the Vite dev server reloads
+`vite.config.ts`.
 
 Optional frontend dev-server variable:
 
 - `BACKEND_PROXY_TARGET`, default `http://127.0.0.1:8000`.
-- `PRODUCTION_ADDIN_URL`, default `https://www.contoso.com/`.
 
 ## Configuration
 
@@ -64,7 +85,7 @@ cp backend/.env.example backend/.env
 Customize `backend/.env` only if needed: CORS origins, context limits, provider base URLs,
 request timeout, and default model. Do not put API keys into `backend/.env`.
 
-Frontend configuration uses the official Office Add-in webpack tooling rather than Vite.
+Frontend configuration uses Vite with the official Office Add-in sideload/debugging tooling.
 Frontend defaults are centralized in:
 
 ```text
@@ -77,11 +98,12 @@ model. It must not contain API keys.
 ## Manual Test Flow
 
 1. Start backend on `http://127.0.0.1:8000`.
-2. Start frontend/add-in with `npm start`.
-3. In Word, choose provider `OpenRouter`, enter API key and model such as `qwen/qwen3.5-flash-02-23`.
-4. Select a legal clause, click `Прочитать выделение`, then run `Проверить риски` or `Переписать пункт`.
-5. Review the suggested action.
-6. Click `Отклонить правку` to leave Word unchanged, or keep the original fragment selected and click `Применить правку`.
+2. Start frontend with `npm run dev`.
+3. Sideload the add-in with `npm run sideload`.
+4. In Word, choose provider `OpenRouter`, enter API key and model such as `qwen/qwen3.5-flash-02-23`.
+5. Select a legal clause, click `Прочитать выделение`, then run `Проверить риски` or `Переписать пункт`.
+6. Review the suggested action.
+7. Click `Отклонить правку` to leave Word unchanged, or keep the original fragment selected and click `Применить правку`.
 
 ## Checks
 
@@ -94,7 +116,7 @@ cd backend
 ```bash
 cd frontend
 npm run lint
-npm run build:dev
+npm run build
 npx tsc --noEmit
 npm run validate
 ```

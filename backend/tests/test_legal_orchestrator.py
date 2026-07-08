@@ -128,6 +128,58 @@ class FakeDuplicateInconsistencyProvider:
         }
 
 
+class FakeRepairingOpenAIProvider(OpenAICompatibleProvider):
+    def __init__(self) -> None:
+        self.calls = 0
+
+    async def _post_chat_completions(
+        self,
+        *,
+        url: str,
+        headers: dict[str, str],
+        payload: dict,
+    ) -> httpx.Response:
+        self.calls += 1
+        request = httpx.Request("POST", url)
+        if self.calls == 1:
+            return httpx.Response(
+                200,
+                request=request,
+                json={
+                    "choices": [
+                        {
+                            "message": {
+                                "content": (
+                                    "answer: Анализ выполнен\n"
+                                    "suggested_actions: []\n"
+                                    "warnings: []"
+                                )
+                            }
+                        }
+                    ]
+                },
+            )
+
+        return httpx.Response(
+            200,
+            request=request,
+            json={
+                "choices": [
+                    {
+                        "message": {
+                            "content": (
+                                '{"answer":"Анализ выполнен",'
+                                '"findings":[],'
+                                '"suggested_actions":[],'
+                                '"warnings":[]}'
+                            )
+                        }
+                    }
+                ]
+            },
+        )
+
+
 def test_mock_provider_still_works() -> None:
     client = TestClient(app)
 
@@ -439,6 +491,55 @@ def test_provider_error_message_is_sanitized() -> None:
 
     assert "[redacted]" in message
     assert "secret-token" not in message
+
+
+def test_provider_parses_openai_content_parts() -> None:
+    provider = OpenAICompatibleProvider()
+
+    parsed = provider._parse_content(
+        [
+            {
+                "type": "text",
+                "text": (
+                    '{"answer":"Готово","findings":[],'
+                    '"suggested_actions":[],"warnings":[]}'
+                ),
+            }
+        ]
+    )
+
+    assert parsed["answer"] == "Готово"
+
+
+def test_provider_accepts_already_parsed_json_content() -> None:
+    provider = OpenAICompatibleProvider()
+
+    parsed = provider._parse_content(
+        {
+            "answer": "Готово",
+            "findings": [],
+            "suggested_actions": [],
+            "warnings": [],
+        }
+    )
+
+    assert parsed["answer"] == "Готово"
+
+
+def test_provider_repairs_malformed_json_response() -> None:
+    provider = FakeRepairingOpenAIProvider()
+
+    parsed = asyncio.run(
+        provider.generate_json(
+            messages=[{"role": "user", "content": "Верни JSON."}],
+            api_key="test-key",
+            model="test-model",
+            base_url="https://provider.test/v1",
+        )
+    )
+
+    assert provider.calls == 2
+    assert parsed["answer"] == "Анализ выполнен"
 
 
 def test_oversized_document_request_returns_413() -> None:

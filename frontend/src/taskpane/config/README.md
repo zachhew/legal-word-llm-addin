@@ -1,6 +1,7 @@
 # Frontend Configuration
 
-This project currently uses the official Office Add-in webpack tooling, not Vite.
+This project uses Vite for the task pane frontend and the official Office Add-in tooling for
+manifest validation and Word sideloading.
 
 Runtime frontend defaults are centralized in `appConfig.ts`:
 
