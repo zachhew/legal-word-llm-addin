@@ -9,10 +9,22 @@ type ProviderSettingsPanelProps = {
 };
 
 function providerDefaults(provider: LlmProviderName, current: ProviderSettings): ProviderSettings {
+  if (provider === "mock") {
+    return {
+      provider,
+      model: "mock-legal-model",
+      baseUrl: "",
+      apiKey: "",
+    };
+  }
+
   if (provider === "openrouter") {
     return {
       provider,
-      model: current.model || appConfig.recommendedOpenRouterModel,
+      model:
+        current.provider === "openrouter" && current.model
+          ? current.model
+          : appConfig.defaultModel,
       baseUrl: current.baseUrl || appConfig.openRouterBaseUrl,
       apiKey: current.apiKey || "",
     };
@@ -20,8 +32,8 @@ function providerDefaults(provider: LlmProviderName, current: ProviderSettings):
 
   return {
     provider,
-    model: current.model,
-    baseUrl: current.baseUrl || "",
+    model: current.provider === "openai_compatible" ? current.model : "",
+    baseUrl: current.provider === "openai_compatible" ? current.baseUrl || "" : "",
     apiKey: current.apiKey || "",
   };
 }
@@ -32,6 +44,7 @@ export function ProviderSettingsPanel({
   isLoading,
 }: ProviderSettingsPanelProps) {
   const isOpenRouter = settings.provider === "openrouter";
+  const isMock = settings.provider === "mock";
 
   function updateSettings(patch: Partial<ProviderSettings>): void {
     onChange({
@@ -54,6 +67,7 @@ export function ProviderSettingsPanel({
             onChange(providerDefaults(event.target.value as LlmProviderName, settings))
           }
         >
+          <option value="mock">Mock</option>
           <option value="openrouter">OpenRouter</option>
           <option value="openai_compatible">OpenAI-compatible</option>
         </select>
@@ -63,8 +77,14 @@ export function ProviderSettingsPanel({
           id="provider-model"
           type="text"
           value={settings.model}
-          disabled={isLoading}
-          placeholder={isOpenRouter ? appConfig.recommendedOpenRouterModel : "model-name"}
+          disabled={isLoading || isMock}
+          placeholder={
+            isMock
+              ? "mock-legal-model"
+              : isOpenRouter
+                ? appConfig.recommendedOpenRouterModel
+                : "model-name"
+          }
           onChange={(event: React.ChangeEvent<HTMLInputElement>) =>
             updateSettings({ model: event.target.value })
           }
@@ -75,9 +95,13 @@ export function ProviderSettingsPanel({
           id="provider-base-url"
           type="text"
           value={settings.baseUrl || ""}
-          disabled={isLoading}
+          disabled={isLoading || isMock}
           placeholder={
-            isOpenRouter ? appConfig.openRouterBaseUrl : "https://your-provider.example/v1"
+            isMock
+              ? "Mock не использует Base URL"
+              : isOpenRouter
+                ? appConfig.openRouterBaseUrl
+                : "https://your-provider.example/v1"
           }
           onChange={(event: React.ChangeEvent<HTMLInputElement>) =>
             updateSettings({ baseUrl: event.target.value })
@@ -89,8 +113,8 @@ export function ProviderSettingsPanel({
           id="provider-api-key"
           type="password"
           value={settings.apiKey || ""}
-          disabled={isLoading}
-          placeholder="Введите ключ API"
+          disabled={isLoading || isMock}
+          placeholder={isMock ? "Mock не требует API key" : "Введите ключ API"}
           onChange={(event: React.ChangeEvent<HTMLInputElement>) =>
             updateSettings({ apiKey: event.target.value })
           }
@@ -98,8 +122,8 @@ export function ProviderSettingsPanel({
       </div>
 
       <p className="help-text">
-        OpenRouter использует OpenAI-compatible Chat Completions API. API key отправляется
-        только вместе с запросом и не сохраняется backend.
+        Mock работает без API key. OpenRouter использует OpenAI-compatible Chat Completions API.
+        API key отправляется только вместе с запросом и не сохраняется backend.
       </p>
     </details>
   );

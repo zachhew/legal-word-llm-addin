@@ -1,111 +1,198 @@
-# Legal Word LLM Add-in
+# Юридический LLM-ассистент для Microsoft Word
 
-Microsoft Word Office Add-in for legal document workflows.
+Word Task Pane Add-in для анализа и аккуратного редактирования юридических документов.
 
-Repository layout:
+Проект состоит из двух частей:
 
 ```text
-backend/   FastAPI API, mock legal service, and LLM provider layer
-frontend/  Word task pane add-in built with React, TypeScript, and Office.js
+backend/   FastAPI API, provider layer, context layer и legal orchestration
+frontend/  Word task pane на Vite + React + TypeScript + Office.js
 ```
 
-The backend supports `mock`, `openrouter`, and `openai_compatible` providers. API keys are
-sent only with a request and are not stored by the backend. The project does not use
-LangChain, LangGraph, a database, vector DB, embeddings, or auth yet.
+Backend поддерживает `mock`, `openrouter` и `openai_compatible`. API key вводится пользователем
+в интерфейсе надстройки, отправляется только в конкретном запросе и не хранится в `.env`,
+frontend config или backend storage.
 
-## Backend
+Проект не использует LangChain, LangGraph, базу данных, vector DB, embeddings или auth.
 
-```bash
-cd backend
-deactivate 2>/dev/null || true
-source .venv/bin/activate
-uvicorn app.main:app --reload --port 8000
-```
+## Возможности
 
-If the virtual environment does not exist yet:
+- чтение выделенного фрагмента из Word;
+- чтение полного документа;
+- режимы контекста: Auto, Selection, Full document, Smart context;
+- вопросы к ассистенту по документу;
+- проверка юридических рисков;
+- поиск противоречий в документе;
+- переписывание выделенного пункта;
+- preview предложенной правки;
+- Apply/Reject controlled editing: Word меняется только после нажатия `Применить правку`.
+
+## Скриншоты
+
+![Настройки провайдера](docs/screenshots/01-provider-settings.png)
+
+![Выводы по проверке рисков](docs/screenshots/02-risk-review-findings.png)
+
+![Preview предложенной правки](docs/screenshots/04-suggested-change-preview.png)
+
+![Вопрос к ассистенту](docs/screenshots/05-ask-document-question.png)
+
+![Контекст при поиске противоречий](docs/screenshots/07-inconsistency-check-context.png)
+
+## Быстрый запуск
+
+### Backend
 
 ```bash
 cd backend
 python3 -m venv --prompt backend .venv
 .venv/bin/python -m pip install -e ".[dev]"
+source .venv/bin/activate
+uvicorn app.main:app --reload --port 8000
 ```
 
-## Frontend
+Backend будет доступен на:
 
-Install trusted Office localhost certificates once if they are not installed yet:
+```text
+http://127.0.0.1:8000
+```
+
+Проверка:
+
+```bash
+curl http://127.0.0.1:8000/health
+```
+
+### Frontend / Word Add-in
+
+Один раз установите доверенные localhost-сертификаты Office:
 
 ```bash
 cd frontend
 npx office-addin-dev-certs install
 ```
 
+Запустите Vite dev server:
+
 ```bash
 cd frontend
+npm install
 npm run dev
 ```
 
-The task pane frontend uses Vite + React + TypeScript and runs at
-`https://localhost:3000/taskpane.html`. Office.js is loaded from the official Microsoft CDN.
-During local development it calls the backend through the Vite proxy path `/backend`, forwarded to
-`http://127.0.0.1:8000`.
+Task pane открывается по адресу:
 
-Sideload the Word add-in from a second terminal:
+```text
+https://localhost:3000/taskpane.html
+```
+
+В отдельном терминале выполните sideload в Word:
 
 ```bash
 cd frontend
 npm run sideload
 ```
 
-Stop the sideloaded add-in/debugging session:
+Остановить sideload/debugging session:
 
 ```bash
 cd frontend
 npm run stop
 ```
 
-If backend calls fail after config changes, restart `npm run dev` so the Vite dev server reloads
-`vite.config.ts`.
-
-Optional frontend dev-server variable:
-
-- `BACKEND_PROXY_TARGET`, default `http://127.0.0.1:8000`.
-
-## Configuration
-
-The project does not require storing LLM API keys in environment variables. Users provide API
-keys directly in the add-in UI. The backend uses the key only for the current request and does
-not persist it.
-
-Backend configuration:
+## Команды frontend
 
 ```bash
-cp backend/.env.example backend/.env
+cd frontend
+npm run dev       # Vite dev server
+npm run build     # production build в frontend/dist
+npm run sideload  # sideload manifest.xml в Word
+npm run stop      # остановить Office debugging session
+npm run lint      # Office Add-in lint
+npm run validate  # проверка manifest.xml через Microsoft validator
 ```
 
-Customize `backend/.env` only if needed: CORS origins, context limits, provider base URLs,
-request timeout, and default model. Do not put API keys into `backend/.env`.
+Frontend ходит в backend через Vite proxy `/backend`, который проксируется на
+`http://127.0.0.1:8000`. Это нужно, чтобы Word WebView не блокировал HTTPS-to-HTTP mixed content.
 
-Frontend configuration uses Vite with the official Office Add-in sideload/debugging tooling.
-Frontend defaults are centralized in:
+Настроить backend target можно переменной:
+
+```bash
+BACKEND_PROXY_TARGET=http://127.0.0.1:8000 npm run dev
+```
+
+## Настройки провайдера
+
+В интерфейсе доступны:
+
+- `Mock` — локальные mock-ответы без API key;
+- `OpenRouter` — OpenAI-compatible Chat Completions API через OpenRouter;
+- `OpenAI-compatible` — любой совместимый endpoint.
+
+По умолчанию выбран OpenRouter. API key вводится в UI и не сохраняется.
+
+Frontend defaults находятся в:
 
 ```text
 frontend/src/taskpane/config/appConfig.ts
 ```
 
-This file contains backend base URL, default provider, default model, and recommended OpenRouter
-model. It must not contain API keys.
+Там нет и не должно быть API keys.
 
-## Manual Test Flow
+## Context Strategy
 
-1. Start backend on `http://127.0.0.1:8000`.
-2. Start frontend with `npm run dev`.
-3. Sideload the add-in with `npm run sideload`.
-4. In Word, choose provider `OpenRouter`, enter API key and model such as `qwen/qwen3.5-flash-02-23`.
-5. Select a legal clause, click `Прочитать выделение`, then run `Проверить риски` or `Переписать пункт`.
-6. Review the suggested action.
-7. Click `Отклонить правку` to leave Word unchanged, or keep the original fragment selected and click `Применить правку`.
+Auto mode выбирает контекст по сценарию:
 
-## Checks
+- `Переписать пункт` использует выделенный пункт как основной контекст;
+- `Проверить риски` использует выделение плюс связанные секции, если доступен полный документ;
+- `Найти противоречия` использует section-aware chunking, low-level raw signals, LLM fact extraction и deterministic conflict candidates;
+- `Задать вопрос` использует выделение, полный документ или smart retrieval в зависимости от доступного текста.
+
+Regex используется только для низкоуровневых сигналов: сроки, проценты, суммы, даты и ссылки на
+пункты. Семантические юридические факты извлекаются LLM через structured JSON prompt.
+
+## Controlled Editing
+
+Backend никогда не меняет Word-документ напрямую. Он возвращает `suggested_actions`.
+
+Frontend показывает:
+
+- исходный текст;
+- предлагаемый текст;
+- обоснование, если оно пришло от модели;
+- кнопки `Применить правку` и `Отклонить правку`.
+
+Перед Apply frontend проверяет, что текущее выделение в Word точно совпадает с `original_text`.
+Если пользователь выделил другой фрагмент, правка не применяется.
+
+## Sample Documents
+
+Для ручной проверки есть документы:
+
+```text
+sample-documents/sample_it_services_contract_risk.docx
+sample-documents/sample_saas_dpa_contract_inconsistencies.docx
+```
+
+Рекомендуемые сценарии:
+
+1. Открыть `sample_it_services_contract_risk.docx`, выделить пункт об ответственности, нажать
+   `Прочитать выделенный текст`, затем `Проверить риски`.
+2. Открыть `sample_saas_dpa_contract_inconsistencies.docx`, нажать `Найти противоречия`.
+3. Проверить, что предложенная правка не применяется до нажатия `Применить правку`.
+
+## Backend Configuration
+
+Backend читает optional config из `backend/.env`.
+
+```bash
+cp backend/.env.example backend/.env
+```
+
+В `.env` можно менять CORS origins, лимиты контекста, provider base URLs и timeout.
+API keys туда добавлять не нужно.
+
+## Проверки перед сдачей
 
 ```bash
 cd backend
@@ -115,8 +202,15 @@ cd backend
 
 ```bash
 cd frontend
-npm run lint
 npm run build
 npx tsc --noEmit
+npm run lint
 npm run validate
 ```
+
+## Ограничения
+
+- Jobs для full-document inconsistency analysis хранятся in-memory и рассчитаны на локальный single-process backend.
+- Качество fact extraction зависит от выбранной LLM-модели.
+- Mock provider нужен для локальной демонстрации flow и не заменяет реальный legal analysis.
+- Проект пока не содержит production auth, persistent storage и server-side secret management.

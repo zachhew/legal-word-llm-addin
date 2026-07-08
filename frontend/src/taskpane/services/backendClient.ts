@@ -252,7 +252,7 @@ async function fetchJson<TResponse>(path: string, init?: RequestInit): Promise<T
     }
 
     throw new Error(
-      `Backend is unavailable through the local dev proxy. Start FastAPI at ${BACKEND_DISPLAY_URL}, then restart npm start so webpack proxy is active. Details: ${String(
+      `Backend is unavailable through the local dev proxy. Start FastAPI at ${BACKEND_DISPLAY_URL}, then restart npm run dev so the Vite proxy is active. Details: ${String(
         error
       )}`
     );
