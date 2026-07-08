@@ -1,0 +1,34 @@
+# OS / editor
+.DS_Store
+.idea/
+.vscode/
+
+# Python
+.venv/
+backend/.venv/
+.env
+.env.local
+backend/.env
+backend/.env.local
+*.env
+!.env.example
+!backend/.env.example
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+*.egg-info/
+.coverage
+htmlcov/
+
+# Node / frontend
+frontend/node_modules/
+frontend/dist/
+frontend/lib/
+frontend/lib-amd/
+
+# Logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
