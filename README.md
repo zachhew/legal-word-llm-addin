@@ -192,21 +192,6 @@ cp backend/.env.example backend/.env
 В `.env` можно менять CORS origins, лимиты контекста, provider base URLs и timeout.
 API keys туда добавлять не нужно.
 
-## Проверки перед сдачей
-
-```bash
-cd backend
-.venv/bin/python -m pytest
-.venv/bin/python -m ruff check .
-```
-
-```bash
-cd frontend
-npm run build
-npx tsc --noEmit
-npm run lint
-npm run validate
-```
 
 ## Ограничения
 
