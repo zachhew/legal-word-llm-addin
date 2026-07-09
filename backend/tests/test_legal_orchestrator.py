@@ -77,6 +77,64 @@ class FakeAnswerOnlyRewriteWithoutRationaleProvider:
         }
 
 
+class FakeCommentaryRewriteThenRepairProvider:
+    def __init__(self) -> None:
+        self.calls = 0
+
+    async def generate_json(
+        self,
+        messages: list[dict[str, str]],
+        api_key: str,
+        model: str,
+        base_url: str | None = None,
+        temperature: float = 0.2,
+    ) -> dict:
+        self.calls += 1
+        original_text = (
+            "Компенсация за нарушение доступности предоставляется исключительно "
+            "в форме сервисного кредита, без возможности денежного возмещения."
+        )
+        if self.calls == 1:
+            return {
+                "answer": "Пункт переработан.",
+                "suggested_actions": [
+                    {
+                        "type": "replace_selection",
+                        "title": "Переписать пункт",
+                        "original_text": original_text,
+                        "proposed_text": (
+                            "Переработан текст пункта с использованием более формального "
+                            "юридического языка. Уточнена терминология: 'нарушение "
+                            "доступности' заменено на 'нарушение показателей доступности'."
+                        ),
+                        "rationale": "Описание изменений ошибочно попало в proposed_text.",
+                    }
+                ],
+                "warnings": [],
+            }
+
+        return {
+            "answer": "Предложена новая редакция пункта.",
+            "suggested_actions": [
+                {
+                    "type": "replace_selection",
+                    "title": "Переписать выделенный пункт",
+                    "original_text": original_text,
+                    "proposed_text": (
+                        "Компенсация за нарушение показателей доступности предоставляется "
+                        "Лицензиату исключительно путем зачисления сервисного кредита на "
+                        "его счет и не предполагает выплаты денежного возмещения."
+                    ),
+                    "rationale": (
+                        "Редакция уточняет получателя компенсации, форму сервисного кредита "
+                        "и исключает двусмысленность денежного возмещения."
+                    ),
+                }
+            ],
+            "warnings": [],
+        }
+
+
 class FakeDuplicateInconsistencyProvider:
     async def generate_json(
         self,
@@ -407,6 +465,53 @@ def test_clause_rewrite_answer_only_without_rationale_hides_fallback_rationale(
     assert payload["suggested_actions"]
     assert payload["suggested_actions"][0]["rationale"] == ""
     assert payload["suggested_actions"][0]["rationale_source"] == "fallback"
+
+
+def test_clause_rewrite_repairs_commentary_in_proposed_text(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from app.services import legal_orchestrator
+
+    fake_provider = FakeCommentaryRewriteThenRepairProvider()
+    monkeypatch.setattr(
+        legal_orchestrator,
+        "get_llm_provider",
+        lambda _name: fake_provider,
+    )
+    client = TestClient(app)
+    original_text = (
+        "Компенсация за нарушение доступности предоставляется исключительно "
+        "в форме сервисного кредита, без возможности денежного возмещения."
+    )
+
+    response = client.post(
+        "/api/legal/run",
+        json={
+            "scenario": "clause_rewrite",
+            "message": "Перепиши пункт.",
+            "document_context": {
+                "mode": "selection",
+                "text": original_text,
+                "character_count": len(original_text),
+            },
+            "provider": {
+                "provider": "openai_compatible",
+                "model": "test-model",
+                "base_url": "http://llm.test/v1",
+                "api_key": "test-key",
+            },
+        },
+    )
+
+    payload = response.json()
+
+    assert response.status_code == 200
+    assert fake_provider.calls == 2
+    assert payload["suggested_actions"]
+    proposed_text = payload["suggested_actions"][0]["proposed_text"]
+    assert proposed_text.startswith("Компенсация за нарушение показателей доступности")
+    assert "Переработан текст пункта" not in proposed_text
+    assert "Уточнена терминология" not in proposed_text
 
 
 def test_inconsistency_check_returns_llm_top_findings(

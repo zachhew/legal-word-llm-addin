@@ -1,5 +1,7 @@
+import logging
 import re
 from datetime import UTC, datetime
+from time import perf_counter
 from typing import Any
 
 from pydantic import ValidationError
@@ -19,6 +21,8 @@ from app.services.action_validator import validate_replace_selection_action
 from app.services.context.context_builder import build_context
 from app.services.mock_legal_service import run_mock_legal_scenario
 from app.services.prompt_builder import build_legal_messages
+
+logger = logging.getLogger(__name__)
 
 
 def _created_at() -> str:
@@ -158,6 +162,47 @@ def _fallback_clause_rewrite_action(
     return action
 
 
+def _build_clause_rewrite_repair_messages(
+    *,
+    original_text: str,
+    raw_response: dict,
+) -> list[dict[str, str]]:
+    return [
+        {
+            "role": "system",
+            "content": (
+                "Ты исправляешь JSON-ответ для сценария clause_rewrite. "
+                "Верни строго валидный JSON object без markdown. "
+                "Нужно вернуть ровно один suggested_actions[0] типа replace_selection. "
+                "original_text должен точно совпадать с исходным текстом. "
+                "proposed_text должен быть новой редакцией договорного пункта, которую можно "
+                "вставить в Word вместо original_text. "
+                "proposed_text НЕ должен быть описанием изменений, комментарием, объяснением "
+                "или фразой вроде 'переработан текст пункта'. "
+                "Объяснение изменений клади только в rationale."
+            ),
+        },
+        {
+            "role": "user",
+            "content": (
+                "Исходный текст для замены:\n"
+                f"{original_text}\n\n"
+                "Предыдущий невалидный JSON-ответ модели:\n"
+                f"{raw_response}\n\n"
+                "Верни JSON в формате: "
+                '{"answer":"краткий ответ",'
+                '"findings":[],'
+                '"suggested_actions":[{"type":"replace_selection",'
+                '"title":"Переписать выделенный пункт",'
+                '"original_text":"...",'
+                '"proposed_text":"новая редакция пункта",'
+                '"rationale":"что именно улучшено и почему"}],'
+                '"warnings":[]}'
+            ),
+        },
+    ]
+
+
 def _normalize_llm_response(
     raw_response: dict, request: LegalRequest, built_context: BuiltContext
 ) -> LegalResponse:
@@ -243,7 +288,53 @@ def _normalize_llm_response(
     )
 
 
+async def _repair_clause_rewrite_if_needed(
+    *,
+    response: LegalResponse,
+    raw_response: dict,
+    request: LegalRequest,
+    built_context: BuiltContext,
+    provider: Any,
+    provider_settings: ProviderSettings,
+    base_url: str | None,
+) -> LegalResponse:
+    original_text = _selected_original_text(request)
+    if request.scenario != "clause_rewrite" or response.suggested_actions or not original_text:
+        return response
+
+    logger.warning(
+        "Clause rewrite response did not contain a valid replacement action; requesting repair: "
+        "provider=%s model=%s",
+        provider_settings.provider,
+        provider_settings.model,
+    )
+    repaired_raw_response = await provider.generate_json(
+        messages=_build_clause_rewrite_repair_messages(
+            original_text=original_text,
+            raw_response=raw_response,
+        ),
+        api_key=provider_settings.api_key or "",
+        model=provider_settings.model or "",
+        base_url=base_url,
+        temperature=0.0,
+    )
+    repaired_response = _normalize_llm_response(
+        repaired_raw_response,
+        request,
+        built_context,
+    )
+    if repaired_response.suggested_actions:
+        repaired_response.warnings.append(
+            "Initial clause rewrite response did not contain valid replacement text; "
+            "backend requested a corrected structured action."
+        )
+        return repaired_response
+
+    return response
+
+
 async def run_legal_scenario(request: LegalRequest) -> LegalResponse:
+    started_at = perf_counter()
     provider_settings = request.provider or ProviderSettings(
         provider=app_settings.default_provider,
         model=app_settings.default_model,
@@ -259,17 +350,40 @@ async def run_legal_scenario(request: LegalRequest) -> LegalResponse:
         provider_settings=provider_settings,
         provider=provider,
     )
+    logger.info(
+        "Context built: scenario=%s provider=%s context_mode=%s strategy=%s "
+        "chunks=%s raw_signals=%s facts=%s conflicts=%s context_chars=%s",
+        request.scenario,
+        provider_settings.provider,
+        request.document_context.mode,
+        built_context.metadata.strategy,
+        built_context.metadata.chunks_used,
+        built_context.metadata.raw_signals_used,
+        built_context.metadata.facts_used,
+        built_context.metadata.conflict_candidates_used,
+        built_context.metadata.total_context_characters,
+    )
 
     if provider_settings.provider == "mock":
         response = await run_mock_legal_scenario(request)
         response.context_metadata = built_context.metadata
         response.warnings.extend(built_context.warnings)
+        logger.info(
+            "Legal scenario completed with mock provider: scenario=%s duration_ms=%s",
+            request.scenario,
+            int((perf_counter() - started_at) * 1000),
+        )
         return response
 
     if provider is None:
         response = await run_mock_legal_scenario(request)
         response.context_metadata = built_context.metadata
         response.warnings.extend(built_context.warnings)
+        logger.info(
+            "Legal scenario completed with fallback mock provider: scenario=%s duration_ms=%s",
+            request.scenario,
+            int((perf_counter() - started_at) * 1000),
+        )
         return response
 
     base_url = provider_settings.base_url
@@ -279,6 +393,14 @@ async def run_legal_scenario(request: LegalRequest) -> LegalResponse:
         base_url = app_settings.openai_compatible_base_url
 
     messages = build_legal_messages(request, built_context)
+    prompt_length = sum(len(message.get("content", "")) for message in messages)
+    logger.info(
+        "Provider call started: scenario=%s provider=%s model=%s prompt_length=%s",
+        request.scenario,
+        provider_settings.provider,
+        provider_settings.model,
+        prompt_length,
+    )
     raw_response = await provider.generate_json(
         messages=messages,
         api_key=provider_settings.api_key or "",
@@ -286,8 +408,39 @@ async def run_legal_scenario(request: LegalRequest) -> LegalResponse:
         base_url=base_url,
         temperature=app_settings.llm_temperature,
     )
+    logger.info(
+        "Provider call completed: scenario=%s provider=%s model=%s duration_ms=%s",
+        request.scenario,
+        provider_settings.provider,
+        provider_settings.model,
+        int((perf_counter() - started_at) * 1000),
+    )
 
     try:
-        return _normalize_llm_response(raw_response, request, built_context)
+        response = _normalize_llm_response(raw_response, request, built_context)
+        response = await _repair_clause_rewrite_if_needed(
+            response=response,
+            raw_response=raw_response,
+            request=request,
+            built_context=built_context,
+            provider=provider,
+            provider_settings=provider_settings,
+            base_url=base_url,
+        )
+        logger.info(
+            "Legal scenario normalized: scenario=%s provider=%s findings=%s "
+            "suggested_actions=%s warnings=%s",
+            request.scenario,
+            provider_settings.provider,
+            len(response.findings),
+            len(response.suggested_actions),
+            len(response.warnings),
+        )
+        return response
     except Exception as error:
+        logger.exception(
+            "LLM response normalization failed: scenario=%s provider=%s",
+            request.scenario,
+            provider_settings.provider,
+        )
         raise InvalidLLMResponseError("LLM response could not be normalized.") from error

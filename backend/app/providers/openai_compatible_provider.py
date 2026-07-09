@@ -1,5 +1,7 @@
 import json
+import logging
 import re
+from time import perf_counter
 from typing import Any
 
 import httpx
@@ -8,6 +10,7 @@ from app.core.config import get_settings
 from app.core.errors import InvalidLLMResponseError, LLMProviderError
 
 MAX_PROVIDER_ERROR_LENGTH = 500
+logger = logging.getLogger(__name__)
 SECRET_PATTERNS = (
     re.compile(r"Bearer\s+[A-Za-z0-9._\-]+", re.IGNORECASE),
     re.compile(r"sk-[A-Za-z0-9_\-]{8,}"),
@@ -161,26 +164,57 @@ class OpenAICompatibleProvider:
         payload: dict[str, Any],
     ) -> httpx.Response:
         settings = get_settings()
+        started_at = perf_counter()
         try:
             async with httpx.AsyncClient(timeout=settings.llm_request_timeout_seconds) as client:
                 response = await client.post(url, headers=headers, json=payload)
                 response.raise_for_status()
+                logger.info(
+                    "LLM provider HTTP request completed: provider=%s model=%s "
+                    "status_code=%s duration_ms=%s response_format=%s",
+                    self.provider_label,
+                    payload.get("model"),
+                    response.status_code,
+                    int((perf_counter() - started_at) * 1000),
+                    bool(payload.get("response_format")),
+                )
                 return response
         except httpx.HTTPStatusError as error:
             status_code = error.response.status_code
             provider_message = self._provider_error_message(error.response)
+            logger.warning(
+                "LLM provider HTTP error: provider=%s model=%s status_code=%s "
+                "response_format=%s",
+                self.provider_label,
+                payload.get("model"),
+                status_code,
+                bool(payload.get("response_format")),
+            )
             if (
                 "response_format" in payload
                 and self._should_retry_without_response_format(status_code, provider_message)
             ):
                 retry_payload = dict(payload)
                 retry_payload.pop("response_format", None)
+                logger.info(
+                    "Retrying LLM provider request without response_format: provider=%s model=%s",
+                    self.provider_label,
+                    payload.get("model"),
+                )
                 try:
                     async with httpx.AsyncClient(
                         timeout=settings.llm_request_timeout_seconds
                     ) as client:
                         response = await client.post(url, headers=headers, json=retry_payload)
                         response.raise_for_status()
+                        logger.info(
+                            "LLM provider retry completed: provider=%s model=%s "
+                            "status_code=%s duration_ms=%s",
+                            self.provider_label,
+                            payload.get("model"),
+                            response.status_code,
+                            int((perf_counter() - started_at) * 1000),
+                        )
                         return response
                 except httpx.HTTPStatusError as retry_error:
                     status_code = retry_error.response.status_code
@@ -193,6 +227,11 @@ class OpenAICompatibleProvider:
 
             raise LLMProviderError(message) from error
         except httpx.HTTPError as error:
+            logger.exception(
+                "LLM provider request failed: provider=%s model=%s",
+                self.provider_label,
+                payload.get("model"),
+            )
             raise LLMProviderError("LLM provider request failed.") from error
 
     async def _request_json_repair(
@@ -270,6 +309,11 @@ class OpenAICompatibleProvider:
             if settings.llm_json_repair_attempts <= 0:
                 raise parse_error
 
+            logger.warning(
+                "LLM provider returned invalid JSON, attempting repair: provider=%s model=%s",
+                self.provider_label,
+                model,
+            )
             try:
                 return await self._request_json_repair(
                     url=url,
@@ -279,6 +323,11 @@ class OpenAICompatibleProvider:
                     temperature=0.0,
                 )
             except LLMProviderError as repair_error:
+                logger.exception(
+                    "LLM provider JSON repair failed: provider=%s model=%s",
+                    self.provider_label,
+                    model,
+                )
                 raise InvalidLLMResponseError(
                     "LLM provider content could not be repaired into valid JSON."
                 ) from repair_error

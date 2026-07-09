@@ -145,6 +145,29 @@ Office WebView. Поэтому frontend использует job endpoints:
 Jobs сейчас in-memory и рассчитаны на локальный single-process backend. API keys не сохраняются
 в job records.
 
+## Logging
+
+Backend использует стандартный Python `logging` без внешних observability-зависимостей.
+
+В логи попадает только operational metadata:
+
+- startup/shutdown backend;
+- endpoint и scenario;
+- provider и model;
+- context mode и context strategy;
+- длины входного текста, selection и full document;
+- количество chunks, raw signals, facts и conflict candidates;
+- request duration;
+- provider/backend errors без sensitive payload.
+
+Backend специально не логирует:
+
+- API keys;
+- полный текст документа;
+- полный prompt;
+- полный response модели;
+- содержимое юридического договора или персональные данные из документа.
+
 ## Примеры
 
 Health:
