@@ -17,6 +17,8 @@ HTTPS-to-HTTP mixed-content проблем в Office WebView.
 
 ## Установка
 
+Требуется Python 3.11+.
+
 ```bash
 cd backend
 python3 -m venv --prompt backend .venv
@@ -24,6 +26,15 @@ python3 -m venv --prompt backend .venv
 ```
 
 ## Запуск
+
+Самый простой вариант:
+
+```bash
+cd backend
+./start.sh
+```
+
+Ручной запуск:
 
 ```bash
 cd backend
@@ -36,13 +47,6 @@ uvicorn app.main:app --reload --port 8000
 ```bash
 cd backend
 .venv/bin/python -m uvicorn app.main:app --reload --host 127.0.0.1 --port 8000
-```
-
-Fallback-скрипт:
-
-```bash
-cd backend
-./start.sh
 ```
 
 После изменения `frontend/vite.config.ts` перезапустите `npm run dev` в `frontend`, чтобы Vite

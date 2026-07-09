@@ -41,7 +41,30 @@ frontend config или backend storage.
 
 ## Быстрый запуск
 
+### Требования
+
+- Python 3.11+
+- Node.js 18+
+- Microsoft Word desktop
+- Git
+
+Скачать проект:
+
+```bash
+git clone https://github.com/zachhew/legal-word-llm-addin.git
+cd legal-word-llm-addin
+```
+
 ### Backend
+
+Самый простой запуск:
+
+```bash
+cd backend
+./start.sh
+```
+
+Ручная установка и запуск:
 
 ```bash
 cd backend
@@ -65,6 +88,13 @@ curl http://127.0.0.1:8000/health
 
 ### Frontend / Word Add-in
 
+Установите зависимости:
+
+```bash
+cd frontend
+npm install
+```
+
 Один раз установите доверенные localhost-сертификаты Office:
 
 ```bash
@@ -76,14 +106,7 @@ npx office-addin-dev-certs install
 
 ```bash
 cd frontend
-npm install
 npm run dev
-```
-
-Task pane открывается по адресу:
-
-```text
-https://localhost:3000/taskpane.html
 ```
 
 В отдельном терминале выполните sideload в Word:
@@ -98,6 +121,12 @@ npm run sideload
 ```bash
 cd frontend
 npm run stop
+```
+
+Task pane открывается по адресу:
+
+```text
+https://localhost:3000/taskpane.html
 ```
 
 ## Команды frontend
