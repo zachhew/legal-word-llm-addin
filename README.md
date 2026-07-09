@@ -27,6 +27,10 @@ frontend config или backend storage.
 - preview предложенной правки;
 - Apply/Reject controlled editing: Word меняется только после нажатия `Применить правку`.
 
+## Демо-видео
+
+[Смотреть демонстрацию работы add-in](docs/demo/legal-word-addin-demo.mp4)
+
 ## Скриншоты
 
 ![Настройки провайдера](docs/screenshots/01-provider-settings.png)
